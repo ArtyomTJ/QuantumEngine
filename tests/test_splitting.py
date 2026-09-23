@@ -100,3 +100,21 @@ def test_splitter_rejects_non_monotonic_timestamps():
 
     with pytest.raises(ValueError, match="отсортированы"):
         list(splitter.split(values))
+
+
+@pytest.mark.parametrize("value", (True, False, 1.5, 10.0))
+@pytest.mark.parametrize(
+    "field", ("train_size", "validation_size", "test_size", "step_size", "embargo"),
+)
+def test_split_config_rejects_bool_and_float_sizes(field, value):
+    values = {
+        "train_size": 20,
+        "validation_size": 10,
+        "test_size": None,
+        "step_size": 10,
+        "embargo": 5,
+    }
+    values[field] = value
+
+    with pytest.raises(TypeError, match="целым числом"):
+        WalkForwardConfig(**values)

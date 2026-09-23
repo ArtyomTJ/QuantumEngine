@@ -20,6 +20,11 @@ from src.market_features import build_price_dynamics
 from src.state_entropy import STATE_NAMES, add_state_entropy
 
 
+_RESERVED_FEATURE_COLUMNS = frozenset(
+    {"timestamp", "future_return", "future_direction"}
+)
+
+
 @dataclass(frozen=True)
 class PipelineConfig:
     volatility_window: int = 60
@@ -69,6 +74,12 @@ class PipelineConfig:
                 )
             if len(set(self.feature_columns)) != len(self.feature_columns):
                 raise ValueError("feature_columns не должен содержать дубликаты.")
+            reserved = set(self.feature_columns) & _RESERVED_FEATURE_COLUMNS
+            if reserved:
+                raise ValueError(
+                    "feature_columns не может содержать служебные/target колонки: "
+                    f"{sorted(reserved)}"
+                )
 
 
 class FeatureTargetPipeline:
@@ -101,8 +112,23 @@ class FeatureTargetPipeline:
 
         return max(entropy_history, state_history)
 
-    def fit(self, train_ohlcv: pd.DataFrame) -> "FeatureTargetPipeline":
-        """Fit только train-derived state: EnergyScales и schema признаков."""
+    def fit(
+        self,
+        train_ohlcv: pd.DataFrame,
+        *,
+        train_only: bool,
+    ) -> "FeatureTargetPipeline":
+        """Fit train-derived state только на train-срезе.
+
+        Параметр ``train_only=True`` обязателен намеренно: pipeline не может
+        сам определить границы train/validation во внешнем DataFrame, поэтому
+        вызывающий код должен явно подтвердить train-only семантику.
+        """
+
+        if train_only is not True:
+            raise ValueError(
+                "fit разрешён только с явным train_only=True и train-срезом."
+            )
 
         train = self._canonical_ohlcv(train_ohlcv)
         engineered = self._engineer(train)
@@ -161,7 +187,28 @@ class FeatureTargetPipeline:
     ) -> PreparedDataset:
         """Создаёт только признаки: future target при inference не рассчитывается."""
 
+        if history is not None and len(history) < self.required_history_rows:
+            raise ValueError(
+                "Недостаточно history для inference: требуется минимум "
+                f"{self.required_history_rows} строк."
+            )
+
         features = self.transform_features(ohlcv, history)
+        feature_values = features.loc[:, self.feature_columns]
+        finite = np.isfinite(feature_values.to_numpy(dtype=float)).all(axis=1)
+
+        if history is not None and not finite.all():
+            raise ValueError(
+                "Недостаточно history для inference: признаки содержат NaN или inf."
+            )
+
+        # При inference цель не строится. Если отдельной history нет, начало
+        # самого ряда является warm-up и исключается, а не возвращается с NaN.
+        features = features.loc[finite].reset_index(drop=True)
+        if features.empty:
+            raise ValueError(
+                "Недостаточно history для inference: нет строк с конечными признаками."
+            )
         return PreparedDataset(
             timestamps=features["timestamp"].copy(),
             features=features.loc[:, self.feature_columns].copy(),
@@ -211,6 +258,29 @@ class FeatureTargetPipeline:
 
         result = ohlcv.copy(deep=True).reset_index(drop=True)
         result["timestamp"] = pd.to_datetime(result["timestamp"], utc=True)
+
+        numeric_columns = ["open", "high", "low", "close", "volume"]
+        non_numeric = [
+            column
+            for column in numeric_columns
+            if not pd.api.types.is_numeric_dtype(result[column])
+            or pd.api.types.is_bool_dtype(result[column])
+        ]
+        if non_numeric:
+            raise ValueError(
+                "OHLCV numeric columns должны быть числовыми: "
+                f"{non_numeric}"
+            )
+        non_finite = [
+            column
+            for column in numeric_columns
+            if not np.isfinite(result[column].to_numpy(dtype=float)).all()
+        ]
+        if non_finite:
+            raise ValueError(
+                "OHLCV numeric columns должны содержать только конечные значения "
+                f"(без NaN/inf): {non_finite}"
+            )
 
         if not result["timestamp"].is_monotonic_increasing:
             raise ValueError("timestamps должны быть отсортированы по возрастанию.")
@@ -267,6 +337,14 @@ class FeatureTargetPipeline:
             columns = self.config.feature_columns
         else:
             columns = list(self._default_feature_columns())
+
+        allowed = set(self._default_feature_columns())
+        forbidden = set(columns) - allowed
+        if forbidden:
+            raise ValueError(
+                "feature_columns допускает только явно поддерживаемые "
+                f"engineered features, получены: {sorted(forbidden)}"
+            )
 
         missing = set(columns) - set(frame.columns)
         if missing:

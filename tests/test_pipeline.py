@@ -36,8 +36,8 @@ def test_pipeline_is_deterministic():
         state_entropy_window=10,
     )
 
-    first = FeatureTargetPipeline(config).fit(df).make_training_dataset(df)
-    second = FeatureTargetPipeline(config).fit(df).make_training_dataset(df)
+    first = FeatureTargetPipeline(config).fit(df, train_only=True).make_training_dataset(df)
+    second = FeatureTargetPipeline(config).fit(df, train_only=True).make_training_dataset(df)
 
     pdt.assert_frame_equal(first.features, second.features)
     pdt.assert_series_equal(first.target_return, second.target_return)
@@ -54,7 +54,7 @@ def test_pipeline_does_not_mutate_input():
             entropy_window=10,
             state_entropy_window=10,
         )
-    ).fit(df)
+    ).fit(df, train_only=True)
 
     pipeline.make_training_dataset(df)
 
@@ -78,7 +78,7 @@ def test_energy_scales_are_fit_only_on_train():
         entropy_window=10,
         state_entropy_window=10,
     )
-    pipeline = FeatureTargetPipeline(config).fit(train)
+    pipeline = FeatureTargetPipeline(config).fit(train, train_only=True)
     scales = pipeline.energy_scales
 
     pipeline.transform_features(validation, history=train.tail(20))
@@ -94,7 +94,7 @@ def test_changing_future_rows_does_not_change_past_features():
         entropy_window=10,
         state_entropy_window=10,
     )
-    pipeline = FeatureTargetPipeline(config).fit(df.iloc[:120])
+    pipeline = FeatureTargetPipeline(config).fit(df.iloc[:120], train_only=True)
     baseline = pipeline.transform_features(df)
 
     changed = df.copy()
@@ -118,7 +118,7 @@ def test_training_dataset_excludes_rows_without_future_target():
             state_entropy_window=10,
             target_horizon=horizon,
         )
-    ).fit(df)
+    ).fit(df, train_only=True)
 
     dataset = pipeline.make_training_dataset(df)
 
@@ -135,13 +135,14 @@ def test_inference_dataset_has_no_target():
             entropy_window=10,
             state_entropy_window=10,
         )
-    ).fit(df)
+    ).fit(df, train_only=True)
 
     dataset = pipeline.make_inference_dataset(df)
 
     assert dataset.target_return is None
     assert dataset.target_direction is None
-    assert len(dataset.features) == len(df)
+    assert len(dataset.features) < len(df)
+    assert np.isfinite(dataset.features.to_numpy(dtype=float)).all()
 
 
 def test_history_transform_matches_full_series():
@@ -152,7 +153,7 @@ def test_history_transform_matches_full_series():
         entropy_window=10,
         state_entropy_window=10,
     )
-    pipeline = FeatureTargetPipeline(config).fit(df.iloc[:split])
+    pipeline = FeatureTargetPipeline(config).fit(df.iloc[:split], train_only=True)
 
     full = pipeline.transform_features(df)
     validation = pipeline.transform_features(
@@ -174,7 +175,7 @@ def test_custom_feature_schema_is_fixed_and_ordered():
             state_entropy_window=10,
             feature_columns=columns,
         )
-    ).fit(df)
+    ).fit(df, train_only=True)
 
     dataset = pipeline.make_inference_dataset(df)
 
@@ -184,7 +185,78 @@ def test_custom_feature_schema_is_fixed_and_ordered():
 
 
 def test_unknown_custom_feature_column_is_rejected():
-    with pytest.raises(ValueError, match="feature columns"):
+    with pytest.raises(ValueError, match="feature_columns"):
         FeatureTargetPipeline(
             PipelineConfig(feature_columns=("does_not_exist",))
-        ).fit(create_ohlcv())
+        ).fit(create_ohlcv(), train_only=True)
+
+
+@pytest.mark.parametrize(
+    "column",
+    ("timestamp", "future_return", "future_direction"),
+)
+def test_service_and_target_columns_are_rejected_from_feature_schema(column):
+    with pytest.raises(ValueError, match="служебные/target"):
+        PipelineConfig(feature_columns=(column,))
+
+
+@pytest.mark.parametrize("column", ("open", "high", "low", "close"))
+def test_raw_ohlcv_columns_are_rejected_from_feature_schema(column):
+    with pytest.raises(ValueError, match="engineered features"):
+        FeatureTargetPipeline(
+            PipelineConfig(feature_columns=(column,))
+        ).fit(create_ohlcv(), train_only=True)
+
+
+def test_fit_requires_explicit_train_only_confirmation():
+    pipeline = FeatureTargetPipeline()
+
+    with pytest.raises(TypeError):
+        pipeline.fit(create_ohlcv())
+    with pytest.raises(ValueError, match="train_only=True"):
+        pipeline.fit(create_ohlcv(), train_only=False)
+
+
+def test_inference_with_sufficient_history_has_only_finite_features():
+    df = create_ohlcv()
+    pipeline = FeatureTargetPipeline(
+        PipelineConfig(
+            volatility_window=10,
+            entropy_window=10,
+            state_entropy_window=10,
+        )
+    ).fit(df.iloc[:120], train_only=True)
+
+    dataset = pipeline.make_inference_dataset(
+        df.iloc[120:],
+        history=df.iloc[120 - pipeline.required_history_rows : 120],
+    )
+
+    assert len(dataset.features) == len(df) - 120
+    assert np.isfinite(dataset.features.to_numpy(dtype=float)).all()
+
+
+def test_inference_rejects_insufficient_history():
+    df = create_ohlcv()
+    pipeline = FeatureTargetPipeline(
+        PipelineConfig(
+            volatility_window=10,
+            entropy_window=10,
+            state_entropy_window=10,
+        )
+    ).fit(df.iloc[:120], train_only=True)
+
+    with pytest.raises(ValueError, match="Недостаточно history"):
+        pipeline.make_inference_dataset(
+            df.iloc[120:],
+            history=df.iloc[120 - pipeline.required_history_rows + 1 : 120],
+        )
+
+
+@pytest.mark.parametrize("value", (np.nan, np.inf, -np.inf))
+def test_non_finite_ohlcv_values_are_rejected(value):
+    df = create_ohlcv()
+    df.loc[10, "close"] = value
+
+    with pytest.raises(ValueError, match="конечные значения"):
+        FeatureTargetPipeline().fit(df, train_only=True)

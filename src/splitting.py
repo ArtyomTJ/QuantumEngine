@@ -1,6 +1,7 @@
 """Детерминированные временные разбиения без перемешивания."""
 
 from dataclasses import dataclass
+from numbers import Integral
 from typing import Iterator
 
 import pandas as pd
@@ -15,6 +16,21 @@ class WalkForwardConfig:
     embargo: int
 
     def __post_init__(self) -> None:
+        for name in (
+            "train_size",
+            "validation_size",
+            "step_size",
+            "embargo",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, Integral):
+                raise TypeError(f"{name} должен быть целым числом.")
+        if self.test_size is not None and (
+            isinstance(self.test_size, bool)
+            or not isinstance(self.test_size, Integral)
+        ):
+            raise TypeError("test_size должен быть целым числом или None.")
+
         if self.train_size < 1:
             raise ValueError("train_size должен быть >= 1.")
         if self.validation_size < 1:
