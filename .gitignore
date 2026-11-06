@@ -45,3 +45,6 @@ $RECYCLE.BIN/
 .env
 .env.*
 !.env.example
+
+# Visual Studio files
+.vs/
