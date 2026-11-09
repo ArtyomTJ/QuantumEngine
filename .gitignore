@@ -48,3 +48,6 @@ $RECYCLE.BIN/
 
 # Visual Studio files
 .vs/
+
+# Local market data
+/data/raw/BTCUSDT-1m-2026-08.csv
