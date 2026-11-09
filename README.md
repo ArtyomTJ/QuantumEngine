@@ -38,17 +38,17 @@ The feature layer derives basic quantities from OHLCV data:
 The current implementation defines an experimental composite measure:
 
 \[
-E_t = \\alpha v_t^2 + \\beta a_t^2 + \\gamma \\sigma_t V_t
+E_t = \alpha v_t^2 + \beta a_t^2 + \gamma \sigma_t V_t
 \]
 
-where \`v_t\` is log return, \`a_t\` is acceleration, \`\\sigma_t\` is rolling volatility, \`V_t\` is volume, and \`\\alpha, \\beta, \\gamma\` are configurable coefficients.
+where \`v_t\` is log return, \`a_t\` is acceleration, \`\sigma_t\` is rolling volatility, \`V_t\` is volume, and \`\alpha, \beta, \gamma\` are configurable coefficients.
 
 This expression is a **modeling hypothesis used by the project**, not a physical energy law. Its terms have different units and scales; the coefficients and normalization are therefore part of the modeling design and must be evaluated empirically.
 
 The normalization module estimates separate quantile-based scales for the squared-return, squared-acceleration, and volatility-volume components. It applies logarithmic compression:
 
 \[
-x_{norm} = \\ln\\left(1 + \\frac{x}{P_q(x)}\\right)
+x_{norm} = \ln\left(1 + \frac{x}{P_q(x)}\right)
 \]
 
 The default quantile is 0.95. In the unified pipeline, these scales are fitted on the training slice and then reused when transforming later data.
@@ -58,7 +58,7 @@ The default quantile is 0.95. In the unified pipeline, these scales are fitted o
 The binary entropy component estimates the rolling proportions of positive and non-positive returns and calculates normalized Shannon entropy:
 
 \[
-H_2 = \\frac{-p_{up}\\ln(p_{up}) - p_{down}\\ln(p_{down})}{\\ln 2}
+H_2 = \frac{-p_{up}\ln(p_{up}) - p_{down}\ln(p_{down})}{\ln 2}
 \]
 
 The result is between 0 and 1. Higher values indicate a more balanced up/down distribution within the rolling window; lower values indicate a more one-sided distribution. This is a description of the observed window, not a forecast.
@@ -80,7 +80,7 @@ It estimates rolling state frequencies and calculates normalized Shannon entropy
 For a configurable horizon \`h\`, the target module constructs:
 
 \[
-R_{t,h} = \\ln\\left(\\frac{close_{t+h}}{close_t}\\right)
+R_{t,h} = \ln\left(\frac{close_{t+h}}{close_t}\right)
 \]
 
 It also assigns a direction label based on the sign of the future return. These are labels for historical research and model evaluation; they are not available at inference time.
@@ -153,7 +153,7 @@ Create and activate a virtual environment (Windows PowerShell):
 
 \`\`\`powershell
 python -m venv .venv
-.\\.venv\\Scripts\\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 \`\`\`
 
 Install dependencies:
